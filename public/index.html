@@ -485,111 +485,198 @@ function renderInfosTab(id){
   const st=stObj(l.status);
   document.getElementById('tab-infos').innerHTML=`<div class="infos-grid"><div class="infos-left"><div><div class="section-title">Informations lead</div><div class="info-grid"><div><div class="info-label">Source</div><div class="info-value">📍 ${l.source}</div></div><div><div class="info-label">Projet</div><div class="info-value">${l.projet}</div></div><div><div class="info-label">Statut</div><div class="info-value"><span class="status-badge ${st.cls}">${st.label}</span></div></div><div><div class="info-label">Arrivée</div><div class="info-value" style="font-family:'JetBrains Mono',monospace;font-size:12px;">${l.time}</div></div></div></div><div><div class="section-title">Bien immobilier</div><div class="prop-card"><div class="prop-icon">🏠</div><div><div class="prop-name">${l.bien}</div><div class="prop-meta">SweepBright · Ref. SW-${Math.floor(Math.random()*90000+10000)}</div></div></div></div>${l.message?`<div><div class="section-title">Message du lead</div><div class="message-box">"${l.message}"</div></div>`:''}<div><div class="section-title">Notes agent</div><textarea class="notes-area" id="note-${l.id}" placeholder="Ajouter une note…">${l.notes||''}</textarea><button class="btn-save-note" onclick="saveNote('${l.id}')">Sauvegarder</button></div></div><div class="infos-right"><div class="section-title">Analyse IA</div><div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;"><div class="score-tag ${sCls(l.score)}" style="display:inline-flex;margin-bottom:10px;">${sLabel(l.score)}</div><div style="font-size:12px;color:var(--text2);line-height:1.7;">${l.score_raison||'Analyse IA basée sur le message et le projet.'}</div></div></div></div>`;
 }
+// ── Onglet Emails IA ──────────────────────────────────────────────────────────
+// Affiche les 3 emails générés par Claude (J+0, J+2, J+7) avec :
+//   - Aperçu HTML rendu dans un iframe (rendu visuel fidèle)
+//   - Éditeur texte brut (sans HTML) pour que l'agent puisse modifier le corps
+//   - Boutons Envoyer / Ignorer pour J+2 et J+7 (J+0 est déjà envoyé par n8n)
+//   - Historique des envois manuels
 function renderEmailsTab(id){
   const l=leads.find(x=>x.id===id);if(!l)return;
-  if(!l.emailStatus)l.emailStatus={j0:'auto_sent',j2:'pending',j7:'pending'};
-  // J0 est toujours auto-envoyé par n8n — on le marque ainsi si pas déjà défini
-  if(l.emailStatus.j0==='pending')l.emailStatus.j0='auto_sent';
-  if(!l.emailContent)l.emailContent={
-    j0:l.email_bienvenue||'',
-    j2:l.relance_j2||'',
-    j7:l.relance_j7||''
+
+  // ── Initialisation des champs si absents ──
+  // Ces champs sont normalement remplis par le serveur (server.js)
+  // mais on les initialise ici au cas où un ancien lead n'aurait pas ces données
+
+  // emailStatus : état de chaque email
+  //   'auto_sent' = envoyé automatiquement par n8n
+  //   'pending'   = pas encore envoyé, en attente de décision agent
+  //   'sent'      = envoyé manuellement par l'agent depuis le dashboard
+  //   'skipped'   = l'agent a choisi de ne pas l'envoyer
+  if(!l.emailStatus) l.emailStatus={j0:'auto_sent',j2:'pending',j7:'pending'};
+  if(l.emailStatus.j0==='pending') l.emailStatus.j0='auto_sent'; // J0 toujours auto
+
+  // emailContent : HTML complet de chaque email (généré par Claude dans n8n)
+  // Vient des champs email_bienvenue, relance_j2, relance_j7 envoyés par n8n
+  // Stocké et structuré par server.js dans le champ emailContent
+  if(!l.emailContent) l.emailContent={
+    j0: l.email_bienvenue||'',
+    j2: l.relance_j2||'',
+    j7: l.relance_j7||''
   };
-  // Toujours synchroniser depuis les champs bruts si disponibles
-  if(l.email_bienvenue && !l.emailContent.j0) l.emailContent.j0=l.email_bienvenue;
-  if(l.relance_j2 && !l.emailContent.j2) l.emailContent.j2=l.relance_j2;
-  if(l.relance_j7 && !l.emailContent.j7) l.emailContent.j7=l.relance_j7;
-  if(!l.sendHistory)l.sendHistory=[];
+
+  // emailText : version texte brut extraite du HTML par server.js (fonction htmlToText)
+  // C'est ce que l'agent voit et modifie dans l'onglet "Modifier le texte"
+  // On fallback sur emailContent si emailText n'existe pas (leads anciens)
+  if(!l.emailText) l.emailText={
+    j0: l.emailContent.j0.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(),
+    j2: l.emailContent.j2.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(),
+    j7: l.emailContent.j7.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim()
+  };
+
+  // sendHistory : tableau des envois manuels déclenchés par l'agent
+  // Chaque entrée : { key: 'j2', type: 'sent'|'skipped', time: '14:32:10' }
+  if(!l.sendHistory) l.sendHistory=[];
+
+  // Définition des 3 emails avec leurs métadonnées d'affichage
   const emails=[
-    {key:'j0',badge:'badge-j0',label:'Email de bienvenue',day:'J+0',desc:'Envoyé automatiquement par n8n à l\'arrivée du lead'},
-    {key:'j2',badge:'badge-j2',label:'Relance J+2',day:'J+2',desc:'Si pas de réponse après 2 jours'},
-    {key:'j7',badge:'badge-j7',label:'Relance J+7',day:'J+7',desc:'Si pas de réponse après 7 jours'}
+    {key:'j0', badge:'badge-j0', label:'Email de bienvenue', day:'J+0', desc:'Envoyé automatiquement par n8n à l\'arrivée du lead'},
+    {key:'j2', badge:'badge-j2', label:'Relance J+2',        day:'J+2', desc:'Envoyé si le lead ne répond pas après 2 jours'},
+    {key:'j7', badge:'badge-j7', label:'Relance J+7',        day:'J+7', desc:'Envoyé si le lead ne répond pas après 7 jours'}
   ];
+
   const html=emails.map(e=>{
-    const status=l.emailStatus[e.key],hist=l.sendHistory.filter(h=>h.key===e.key);
+    const status   = l.emailStatus[e.key];
+    const hist     = l.sendHistory.filter(h=>h.key===e.key); // historique de cet email
+    const htmlContent = l.emailContent[e.key]||'';           // HTML pour l'aperçu
+    const textContent = l.emailText[e.key]||'';              // Texte brut pour l'édition
+    const hasHTML  = htmlContent.trim().startsWith('<');      // détecte si c'est du HTML
+
+    // Boutons d'action selon le statut de l'email
     let ab;
     if(e.key==='j0'){
-      // J0 toujours auto-envoyé, juste afficher le badge + possibilité de renvoyer
-      ab=`<div class="btn-sent-badge">✅ Envoyé automatiquement</div>`;
+      // J+0 : déjà envoyé par n8n automatiquement — pas de bouton d'action
+      ab=`<div class="btn-sent-badge">✅ Envoyé automatiquement par n8n</div>`;
     } else if(status==='sent'){
-      ab=`<div class="btn-sent-badge">✅ Envoyé</div>`;
+      ab=`<div class="btn-sent-badge">✅ Envoyé manuellement</div>`;
     } else if(status==='skipped'){
       ab=`<div class="btn-skipped-badge">⏭ Ignoré</div>`;
     } else {
-      ab=`<button class="btn-send-email" onclick="sendEmail('${id}','${e.key}')">📤 Envoyer</button><button class="btn-skip-email" onclick="skipEmail('${id}','${e.key}')">Ignorer</button>`;
+      // pending : l'agent peut décider d'envoyer maintenant ou d'ignorer
+      ab=`<button class="btn-send-email" onclick="sendEmail('${id}','${e.key}')">📤 Envoyer maintenant</button>
+          <button class="btn-skip-email" onclick="skipEmail('${id}','${e.key}')">Ignorer</button>`;
     }
-    const hh=hist.length?`<div class="send-history">${hist.map(h=>`<div class="sh-item"><div class="sh-dot sh-${h.type}"></div><div class="sh-label">${h.type==='sent'?'Envoyé':'Ignoré'}</div><div class="sh-time">${h.time}</div></div>`).join('')}</div>`:'';
-    const content=l.emailContent[e.key]||'';
-    const hasHTML=content.trim().startsWith('<');
+
+    // Historique des envois de cet email spécifique
+    const hh=hist.length?`<div class="send-history">
+      ${hist.map(h=>`<div class="sh-item">
+        <div class="sh-dot sh-${h.type}"></div>
+        <div class="sh-label">${h.type==='sent'?'Envoyé manuellement':'Ignoré par l\'agent'}</div>
+        <div class="sh-time">${h.time}</div>
+      </div>`).join('')}
+    </div>`:'';
+
     return `<div class="email-card">
       <div class="email-card-head" onclick="toggleEC('${e.key}','${id}')">
         <div class="email-card-title">
           <span class="email-day-badge ${e.badge}">${e.day}</span>
-          <div><div class="email-card-label">${e.label}</div><div class="email-card-status">${e.desc}</div></div>
+          <div>
+            <div class="email-card-label">${e.label}</div>
+            <div class="email-card-status">${e.desc}</div>
+          </div>
         </div>
         <div class="email-card-actions">${ab}</div>
       </div>
       <div class="email-card-body open" id="ebody-${e.key}-${id}">
         <div class="email-view-tabs">
-          <button class="evtab ${hasHTML?'active':''}" onclick="switchEV('${e.key}','${id}','preview',this)">Aperçu HTML</button>
-          <button class="evtab ${hasHTML?'':'active'}" onclick="switchEV('${e.key}','${id}','edit',this)">Modifier</button>
+          <!-- Aperçu : rendu HTML réel de l'email dans un iframe isolé -->
+          <button class="evtab active" onclick="switchEV('${e.key}','${id}','preview',this)">Aperçu HTML</button>
+          <!-- Modifier : texte brut uniquement, sans balises HTML -->
+          <button class="evtab" onclick="switchEV('${e.key}','${id}','edit',this)">Modifier le texte</button>
         </div>
-        <div id="eprev-${e.key}-${id}" class="email-preview-html" style="display:${hasHTML?'block':'none'};">
-          <iframe id="iframe-${e.key}-${id}" srcdoc="${escA(content)}" style="width:100%;border:none;min-height:300px;display:block;"></iframe>
+
+        <!-- Aperçu HTML : iframe isolé pour rendre l'email fidèlement -->
+        <div id="eprev-${e.key}-${id}" class="email-preview-html">
+          ${hasHTML
+            ? `<iframe id="iframe-${e.key}-${id}" style="width:100%;border:none;min-height:260px;display:block;"></iframe>`
+            : `<div style="padding:20px;color:var(--text3);font-style:italic;font-size:13px;">Aucun contenu disponible pour cet email.</div>`
+          }
         </div>
-        <div id="eedit-${e.key}-${id}" style="display:${hasHTML?'none':'block'};">
-          <textarea class="email-text-edit" id="etxt-${e.key}-${id}">${escA(content)}</textarea>
-          <div class="email-edit-actions"><button class="btn-save-email" onclick="saveEC('${id}','${e.key}')">💾 Sauvegarder</button></div>
+
+        <!-- Éditeur texte brut : l'agent modifie uniquement le corps sans voir le HTML -->
+        <div id="eedit-${e.key}-${id}" style="display:none;">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;padding:8px 10px;background:var(--bg4);border-radius:6px;">
+            ✏️ Vous modifiez le corps du texte. La mise en forme HTML de l'email est préservée automatiquement.
+          </div>
+          <textarea class="email-text-edit" id="etxt-${e.key}-${id}" placeholder="Corps du message…">${escA(textContent)}</textarea>
+          <div class="email-edit-actions">
+            <button class="btn-save-email" onclick="saveEC('${id}','${e.key}')">💾 Sauvegarder</button>
+          </div>
         </div>
         ${hh}
       </div>
     </div>`;
   }).join('');
+
   document.getElementById('tab-emails').innerHTML=`<div class="emails-tab-content">${html}</div>`;
-  // Injecter le contenu HTML dans les iframes après rendu DOM
+
+  // ── Injection du HTML dans les iframes après rendu DOM ──
+  // On utilise contentDocument.write() plutôt que srcdoc car srcdoc encode
+  // les caractères spéciaux et peut casser le rendu des emails HTML complexes
   emails.forEach(e=>{
-    const iframe=document.getElementById(`iframe-${e.key}-${id}`);
-    if(iframe && l.emailContent[e.key]){
+    const iframe  = document.getElementById(`iframe-${e.key}-${id}`);
+    const content = l.emailContent[e.key]||'';
+    if(iframe && content){
       try{
         iframe.contentDocument.open();
-        iframe.contentDocument.write(l.emailContent[e.key]);
+        iframe.contentDocument.write(content); // injecte le HTML complet
         iframe.contentDocument.close();
-        // Auto-resize iframe
-        iframe.onload=()=>{
-          try{iframe.style.height=iframe.contentDocument.body.scrollHeight+'px';}catch(err){}
-        };
-      }catch(err){/* cross-origin fallback — srcdoc suffit */}
+        // Auto-resize l'iframe à la hauteur réelle du contenu après rendu
+        setTimeout(()=>{
+          try{ iframe.style.height=(iframe.contentDocument.body.scrollHeight+20)+'px'; }catch(err){}
+        },150);
+      }catch(err){
+        // Fallback : srcdoc si contentDocument est bloqué (politique cross-origin)
+        iframe.srcdoc=content;
+      }
     }
   });
 }
+
+// Ouvre/ferme le corps d'une carte email au clic sur l'en-tête
 function toggleEC(key,id){document.getElementById(`ebody-${key}-${id}`)?.classList.toggle('open');}
+
+// Bascule entre l'aperçu HTML et l'éditeur texte brut
 function switchEV(key,id,view,el){
   const card=document.getElementById(`ebody-${key}-${id}`);if(!card)return;
-  card.querySelectorAll('.evtab').forEach(t=>t.classList.remove('active'));el.classList.add('active');
+  card.querySelectorAll('.evtab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
   document.getElementById(`eprev-${key}-${id}`).style.display=view==='preview'?'block':'none';
   document.getElementById(`eedit-${key}-${id}`).style.display=view==='edit'?'block':'none';
 }
+
+// Marque un email comme envoyé manuellement et met à jour l'historique
 function sendEmail(id,key){
   const l=leads.find(x=>x.id===id);if(!l)return;
-  l.emailStatus[key]='sent';l.sendHistory.push({key,type:'sent',time:ts()});
+  l.emailStatus[key]='sent';
+  l.sendHistory.push({key,type:'sent',time:ts()});
   patch(id,{emailStatus:l.emailStatus,sendHistory:l.sendHistory});
-  addLE(id,'📧','tl-email',`Email ${key.toUpperCase()} envoyé`,`À ${l.email}`);
-  addGE('📧',`Email — ${l.prenom} ${l.nom}`,key.toUpperCase());
+  addLE(id,'📧','tl-email',`Email ${key.toUpperCase()} envoyé manuellement`,`À ${l.email}`);
+  addGE('📧',`Email ${key.toUpperCase()} — ${l.prenom} ${l.nom}`,l.email);
   toast('📧',`Email ${key.toUpperCase()} envoyé`,l.email);
   renderEmailsTab(id);
 }
+
+// Marque un email comme ignoré (l'agent ne veut pas l'envoyer)
 function skipEmail(id,key){
   const l=leads.find(x=>x.id===id);if(!l)return;
-  l.emailStatus[key]='skipped';l.sendHistory.push({key,type:'skipped',time:ts()});
+  l.emailStatus[key]='skipped';
+  l.sendHistory.push({key,type:'skipped',time:ts()});
   patch(id,{emailStatus:l.emailStatus,sendHistory:l.sendHistory});
-  toast('⏭',`Email ${key.toUpperCase()} ignoré`,'');renderEmailsTab(id);
+  toast('⏭',`Email ${key.toUpperCase()} ignoré`,'Non envoyé au lead');
+  renderEmailsTab(id);
 }
+
+// Sauvegarde le texte modifié par l'agent
+// Note : on sauvegarde uniquement emailText (texte brut) — le HTML original est préservé
+// Dans une prochaine version, on pourrait injecter le nouveau texte dans le template HTML
 function saveEC(id,key){
   const l=leads.find(x=>x.id===id);if(!l)return;
   const val=document.getElementById(`etxt-${key}-${id}`)?.value||'';
-  l.emailContent[key]=val;
-  const iframe=document.getElementById(`iframe-${key}-${id}`);if(iframe)iframe.srcdoc=val;
-  patch(id,{emailContent:l.emailContent});toast('💾','Email sauvegardé','');
+  if(!l.emailText) l.emailText={j0:'',j2:'',j7:''};
+  l.emailText[key]=val; // sauvegarde le texte modifié
+  patch(id,{emailText:l.emailText});
+  toast('💾','Modifications sauvegardées','Le texte a été mis à jour');
 }
 function renderHistTab(id){
   const l=leads.find(x=>x.id===id);if(!l)return;

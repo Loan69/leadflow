@@ -1,39 +1,84 @@
 const express = require('express');
 const app = express();
 
-// Permet à Express de lire le JSON envoyé par n8n
-app.use(express.json());
+// ── Middleware ──
+// Permet à Express de lire le corps JSON des requêtes entrantes (depuis n8n)
+app.use(express.json({ limit: '5mb' })); // limit 5mb car les emails HTML peuvent être lourds
 
-// Sert automatiquement tous les fichiers du dossier "public"
-// Quand quelqu'un ouvre l'URL, il reçoit public/index.html
+// Sert automatiquement tous les fichiers statiques du dossier "public"
+// index.html, CSS, JS sont servis depuis ici
 app.use(express.static('public'));
 
-// ── Stockage des leads en mémoire ──
-// Simple tableau JavaScript — les leads sont perdus si le serveur redémarre
-// Pour une vraie prod, on utiliserait une base de données
+// ── Stockage en mémoire ──
+// Tableau simple — rapide à mettre en place mais les leads sont perdus au redémarrage
+// À remplacer par PostgreSQL ou SQLite en production
 let leads = [];
 
-// ── ROUTE 1 : n8n envoie un nouveau lead ──
-// n8n fait un POST sur /webhook/lead avec les infos du lead en JSON
+// ── Utilitaire : extraire le texte brut d'un HTML ──
+// Utilisé pour afficher une version éditable sans balises HTML dans le dashboard
+// Exemple : "<p>Bonjour <b>Jean</b></p>" → "Bonjour Jean"
+function htmlToText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '') // supprime les blocs <style>
+    .replace(/<[^>]+>/g, ' ')                        // supprime toutes les balises HTML
+    .replace(/&nbsp;/g, ' ')                         // décode les espaces insécables
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s{2,}/g, ' ')                         // réduit les espaces multiples
+    .trim();
+}
+
+// ── ROUTE 1 : Réception d'un nouveau lead depuis n8n ──
+// n8n appelle cette route en POST après avoir scoré le lead avec Claude
+// Le body contient : prenom, nom, email, tel, bien, source, projet, message,
+//                    score, score_raison, email_bienvenue, relance_j2, relance_j7
 app.post('/webhook/lead', (req, res) => {
+
+  const body = req.body;
+
+  // On construit le champ emailContent qui regroupe les 3 emails générés par l'IA
+  // email_bienvenue, relance_j2, relance_j7 sont envoyés par n8n dans le body
+  const emailContent = {
+    j0: body.email_bienvenue || '',  // Email envoyé immédiatement par n8n
+    j2: body.relance_j2 || '',       // Email de relance à J+2 (envoyé par workflow relances)
+    j7: body.relance_j7 || ''        // Email de relance à J+7 (envoyé par workflow relances)
+  };
+
+  // emailText contient la version texte brut de chaque email (pour l'édition agent)
+  // L'agent voit le texte sans balises HTML, plus lisible pour faire des modifications
+  const emailText = {
+    j0: htmlToText(emailContent.j0),
+    j2: htmlToText(emailContent.j2),
+    j7: htmlToText(emailContent.j7)
+  };
+
+  // emailStatus trace l'état de chaque email
+  // j0 est déjà envoyé automatiquement par n8n — on le marque 'auto_sent'
+  // j2 et j7 sont en attente — ils seront envoyés par le workflow relances ou manuellement
+  const emailStatus = {
+    j0: 'auto_sent',
+    j2: 'pending',
+    j7: 'pending'
+  };
+
   const lead = {
-    ...req.body,
+    ...body,           // tous les champs envoyés par n8n (prenom, nom, email, score, etc.)
     id: Date.now().toString(),
     time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     status: 'new',
     notes: '',
-    history: [
-      {
-        ico: '🏠',
-        cls: 'tl-lead',
-        title: 'Lead SweepBright reçu',
-        desc: `Via ${req.body.source || 'Plateforme'} · ${req.body.bien || ''}`,
-        time: new Date().toLocaleTimeString('fr-FR')
-      }
-    ]
+    emailContent,      // HTML complet des 3 emails — pour l'aperçu visuel
+    emailText,         // Texte brut des 3 emails — pour l'édition par l'agent
+    emailStatus,       // État de chaque email (auto_sent / pending / sent / skipped)
+    sendHistory: [],   // Historique des envois manuels (cliqués par l'agent)
+    history: []        // Historique des actions sur ce lead (affiché dans l'onglet Historique)
   };
-  leads.unshift(lead);
-  console.log(`✅ Nouveau lead reçu : ${lead.prenom} ${lead.nom}`);
+
+  leads.unshift(lead); // on ajoute en tête de liste pour afficher le plus récent en premier
+  console.log(`✅ Nouveau lead reçu : ${lead.prenom} ${lead.nom} (score: ${lead.score})`);
   res.json({ ok: true, id: lead.id });
 });
 
