@@ -31,6 +31,45 @@ function htmlToText(html) {
     .trim();
 }
 
+// ── Utilitaire : wrapper un texte brut dans un template HTML email ──
+// Quand Claude/n8n envoie du texte brut (pas du HTML), on le met en forme
+// automatiquement dans un template visuel cohérent avec le design LeadFlow
+function wrapTextToHTML(text) {
+  if (!text) return '';
+  // Si c'est déjà du HTML, on ne touche pas
+  if (text.trim().startsWith('<')) return text;
+
+  // Convertit le texte brut en paragraphes HTML
+  // Chaque bloc séparé par une ligne vide devient un <p>
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(block => block.length > 0)
+    .map(block => {
+      // Lignes courtes sans ponctuation de fin = titre de section
+      if (block.length < 60 && !block.endsWith('.') && !block.endsWith(',')) {
+        return `<p style="color:#8a9ab0;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;margin:20px 0 6px;font-weight:600;">${block}</p>`;
+      }
+      return `<p style="color:#4a5a70;font-size:14px;line-height:1.8;margin:0 0 14px;">${block.replace(/\n/g,'<br>')}</p>`;
+    })
+    .join('');
+
+  return `<html><body style="font-family:Georgia,serif;background:#f4f1eb;padding:30px 20px;">
+    <div style="max-width:560px;margin:0 auto;background:white;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.08);">
+      <div style="background:#0d1117;padding:28px 32px;text-align:center;">
+        <div style="background:linear-gradient(135deg,#c8a45a,#e2c17e);display:inline-block;padding:7px 16px;border-radius:7px;margin-bottom:12px;">
+          <span style="color:#0d1117;font-size:11px;font-weight:700;letter-spacing:2px;">AGENCE ORPI</span>
+        </div>
+        <p style="color:#8a9ab0;font-size:11px;letter-spacing:1px;margin:0;">LeadFlow — Email généré par IA</p>
+      </div>
+      <div style="padding:32px;">${paragraphs}</div>
+      <div style="background:#0d1117;padding:14px 32px;text-align:center;">
+        <p style="color:#4a5a70;font-size:10px;margin:0;">Propulsé par LeadFlow × n8n</p>
+      </div>
+    </div>
+  </body></html>`;
+}
+
 // ── ROUTE 1 : Réception d'un nouveau lead depuis n8n ──
 // n8n appelle cette route en POST après avoir scoré le lead avec Claude
 // Le body contient : prenom, nom, email, tel, bien, source, projet, message,
@@ -41,10 +80,13 @@ app.post('/webhook/lead', (req, res) => {
 
   // On construit le champ emailContent qui regroupe les 3 emails générés par l'IA
   // email_bienvenue, relance_j2, relance_j7 sont envoyés par n8n dans le body
+  // wrapTextToHTML détecte automatiquement si c'est du texte brut ou du HTML :
+  //   - texte brut (envoyé par Claude via n8n) → mis en forme dans un template HTML
+  //   - HTML complet (déjà formaté) → conservé tel quel
   const emailContent = {
-    j0: body.email_bienvenue || '',  // Email envoyé immédiatement par n8n
-    j2: body.relance_j2 || '',       // Email de relance à J+2 (envoyé par workflow relances)
-    j7: body.relance_j7 || ''        // Email de relance à J+7 (envoyé par workflow relances)
+    j0: wrapTextToHTML(body.email_bienvenue || ''),
+    j2: wrapTextToHTML(body.relance_j2 || ''),
+    j7: wrapTextToHTML(body.relance_j7 || '')
   };
 
   // emailText contient la version texte brut de chaque email (pour l'édition agent)
@@ -97,22 +139,25 @@ app.post('/webhook/lead', (req, res) => {
   console.log('─────────────────────────────────────────────────');
   // Emails — on vérifie leur présence ET leur contenu
   if (emailContent.j0) {
+    const wasText = !(body.email_bienvenue || '').trim().startsWith('<');
     const preview = htmlToText(emailContent.j0).slice(0, 80);
-    console.log(`  ✅ email_bienvenue : ${emailContent.j0.length} caractères`);
+    console.log(`  ✅ email_bienvenue : ${emailContent.j0.length} caractères ${wasText ? '(texte brut → converti en HTML)' : '(HTML natif)'}`);
     console.log(`     Aperçu texte    : "${preview}…"`);
   } else {
     console.log(`  ❌ email_bienvenue : MANQUANT — clé attendue : "email_bienvenue"`);
   }
   if (emailContent.j2) {
+    const wasText = !(body.relance_j2 || '').trim().startsWith('<');
     const preview = htmlToText(emailContent.j2).slice(0, 80);
-    console.log(`  ✅ relance_j2      : ${emailContent.j2.length} caractères`);
+    console.log(`  ✅ relance_j2      : ${emailContent.j2.length} caractères ${wasText ? '(texte brut → converti en HTML)' : '(HTML natif)'}`);
     console.log(`     Aperçu texte    : "${preview}…"`);
   } else {
     console.log(`  ❌ relance_j2      : MANQUANT — clé attendue : "relance_j2"`);
   }
   if (emailContent.j7) {
+    const wasText = !(body.relance_j7 || '').trim().startsWith('<');
     const preview = htmlToText(emailContent.j7).slice(0, 80);
-    console.log(`  ✅ relance_j7      : ${emailContent.j7.length} caractères`);
+    console.log(`  ✅ relance_j7      : ${emailContent.j7.length} caractères ${wasText ? '(texte brut → converti en HTML)' : '(HTML natif)'}`);
     console.log(`     Aperçu texte    : "${preview}…"`);
   } else {
     console.log(`  ❌ relance_j7      : MANQUANT — clé attendue : "relance_j7"`);
