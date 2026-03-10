@@ -77,8 +77,52 @@ app.post('/webhook/lead', (req, res) => {
     history: []        // Historique des actions sur ce lead (affiché dans l'onglet Historique)
   };
 
-  leads.unshift(lead); // on ajoute en tête de liste pour afficher le plus récent en premier
-  console.log(`✅ Nouveau lead reçu : ${lead.prenom} ${lead.nom} (score: ${lead.score})`);
+  leads.unshift(lead);
+
+  // ── LOGS DÉTAILLÉS ─────────────────────────────────────────
+  // Visible dans Railway → onglet "Deployments" → "View Logs"
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`📥 NOUVEAU LEAD REÇU — ID ${lead.id}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`  prenom       : ${body.prenom       || '❌ MANQUANT'}`);
+  console.log(`  nom          : ${body.nom          || '❌ MANQUANT'}`);
+  console.log(`  email        : ${body.email        || '❌ MANQUANT'}`);
+  console.log(`  tel          : ${body.tel          || '❌ MANQUANT'}`);
+  console.log(`  bien         : ${body.bien         || '❌ MANQUANT'}`);
+  console.log(`  source       : ${body.source       || '❌ MANQUANT'}`);
+  console.log(`  projet       : ${body.projet       || '❌ MANQUANT'}`);
+  console.log(`  score        : ${body.score        || '❌ MANQUANT'}`);
+  console.log(`  score_raison : ${body.score_raison ? body.score_raison.slice(0,80)+'…' : '❌ MANQUANT'}`);
+  console.log(`  message      : ${body.message      ? body.message.slice(0,80)+'…'      : '❌ MANQUANT'}`);
+  console.log('─────────────────────────────────────────────────');
+  // Emails — on vérifie leur présence ET leur contenu
+  if (emailContent.j0) {
+    const preview = htmlToText(emailContent.j0).slice(0, 80);
+    console.log(`  ✅ email_bienvenue : ${emailContent.j0.length} caractères`);
+    console.log(`     Aperçu texte    : "${preview}…"`);
+  } else {
+    console.log(`  ❌ email_bienvenue : MANQUANT — clé attendue : "email_bienvenue"`);
+  }
+  if (emailContent.j2) {
+    const preview = htmlToText(emailContent.j2).slice(0, 80);
+    console.log(`  ✅ relance_j2      : ${emailContent.j2.length} caractères`);
+    console.log(`     Aperçu texte    : "${preview}…"`);
+  } else {
+    console.log(`  ❌ relance_j2      : MANQUANT — clé attendue : "relance_j2"`);
+  }
+  if (emailContent.j7) {
+    const preview = htmlToText(emailContent.j7).slice(0, 80);
+    console.log(`  ✅ relance_j7      : ${emailContent.j7.length} caractères`);
+    console.log(`     Aperçu texte    : "${preview}…"`);
+  } else {
+    console.log(`  ❌ relance_j7      : MANQUANT — clé attendue : "relance_j7"`);
+  }
+  console.log('─────────────────────────────────────────────────');
+  // Dump complet des clés reçues — utile pour voir si n8n envoie des noms différents
+  console.log(`  Toutes les clés reçues dans le body :`);
+  console.log(`  → ${Object.keys(body).join(', ')}`);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
   res.json({ ok: true, id: lead.id });
 });
 
