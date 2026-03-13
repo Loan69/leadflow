@@ -109,7 +109,7 @@ app.post('/webhook/lead', (req, res) => {
   const lead = {
     ...body,           // tous les champs envoyés par n8n (prenom, nom, email, score, etc.)
     id: Date.now().toString(),
-    time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Europe/Paris' }),
     status: 'new',
     notes: '',
     emailContent,      // HTML complet des 3 emails — pour l'aperçu visuel
